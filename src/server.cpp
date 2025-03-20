@@ -11,6 +11,8 @@
 #include <vector>
 #include <unordered_map>
 
+#include <pthread.h>
+
 // Debug tag for std::out statements with toggle functionality
 #define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
@@ -46,12 +48,9 @@ std::string make_response(std::string status_code, std::string content) {
   return "HTTP/1.1 " + status_code + "\r\nContent-Type: text/plain\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
 }
 
-int send_response(int client_socket, int server_socket, std::string response) {
+int send_response(int client_socket, std::string response) {
   send(client_socket, response.c_str(), response.size(), 0);
   DEBUG("Response sent: " << response);
-
-  close(client_socket);
-  close(server_socket);
   return 0;
 }
 
@@ -129,6 +128,49 @@ public:
     }
 };
 
+struct ConnectionData {
+    int client_socket;
+    struct sockaddr_in client_addr;
+};
+
+void* handle_connection(void* arg) {
+  ConnectionData* data = (ConnectionData*)arg;
+  int client_socket = data->client_socket;
+  struct sockaddr_in client_addr = data->client_addr;
+  free(data);
+
+  std::string response;
+  response = make_response("400 Bad Request", ""); // Default response for malformed requests
+
+  // Buffer to store the incoming HTTP request
+  char buffer[1024] = {0};
+  int bytes_read = read(client_socket, buffer, sizeof(buffer));
+  if (bytes_read < 0) {
+    std::cerr << "Failed to read from client\n";
+    send_response(client_socket, response);
+    return NULL;
+  }
+
+  buffer[bytes_read] = '\0';
+  DEBUG("Received HTTP request:\n" << buffer);
+  RequestParser request_parser(buffer);
+
+  API api(request_parser);
+  
+  // Handle the URL
+  try {
+    std::string content = api.getResponse();
+    response = make_response("200 OK", content);
+  } catch (const APINotFoundException& e) {
+    DEBUG("API not found: " << e.what());
+    response = make_response("404 Not Found", "");
+  }
+
+  send_response(client_socket, response);
+  close(client_socket);
+  return NULL;
+}
+
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
   std::cout << std::unitbuf;
@@ -168,42 +210,39 @@ int main(int argc, char **argv) {
     std::cerr << "listen failed\n";
     return 1;
   }
-  
-  struct sockaddr_in client_addr;
-  int client_addr_len = sizeof(client_addr);
-
-  std::string response;
-  response = make_response("400 Bad Request", ""); // Default response for malformed requests
-
-  DEBUG("Waiting for a client to connect...");
-  
-  int client = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
-
-  // Buffer to store the incoming HTTP request
-  char buffer[1024] = {0};
-  int bytes_read = read(client, buffer, sizeof(buffer));
-  if (bytes_read < 0) {
-    std::cerr << "Failed to read from client\n";
-    send_response(client, server_fd, response);
-    return 1;
+  DEBUG("Waiting for clients to connect...");
+    
+  // Main server loop
+  while (true) {
+      struct sockaddr_in client_addr;
+      int client_addr_len = sizeof(client_addr);
+      
+      int client_socket = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
+      if (client_socket < 0) {
+          std::cerr << "Failed to accept connection\n";
+          continue;
+      }
+      
+      DEBUG("Client connected");
+      
+      // Create data structure to pass to thread
+      ConnectionData* conn_data = new ConnectionData;
+      conn_data->client_socket = client_socket;
+      conn_data->client_addr = client_addr;
+      
+      // Create a new thread to handle this connection
+      pthread_t thread_id;
+      if (pthread_create(&thread_id, NULL, handle_connection, (void*)conn_data) != 0) {
+          std::cerr << "Failed to create thread\n";
+          close(client_socket);
+          delete conn_data;
+          continue;
+      }
+      
+      // Detach the thread so its resources are automatically released when it terminates
+      pthread_detach(thread_id);
   }
 
-  buffer[bytes_read] = '\0';
-  DEBUG("Received HTTP request:\n" << buffer);
-  RequestParser request_parser(buffer);
-
-  API api(request_parser);
-
-  
-  // Handle the URL
-  try {
-    std::string content = api.getResponse();
-    response = make_response("200 OK", content);
-  } catch (const APINotFoundException& e) {
-    DEBUG("API not found: " << e.what());
-    response = make_response("404 Not Found", "");
-  }
-
-  send_response(client, server_fd, response);
+  close(server_fd);
   return 0;
 }
