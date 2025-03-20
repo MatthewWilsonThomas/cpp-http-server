@@ -8,7 +8,9 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sstream>
+#include <vector>
 #include <unordered_map>
+
 // Debug tag for std::out statements with toggle functionality
 #define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
