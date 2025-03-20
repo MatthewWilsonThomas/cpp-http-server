@@ -12,6 +12,56 @@
 #define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
+// Custom exception for API not found errors
+class APINotFoundException : public std::exception {
+private:
+    std::string message;
+
+public:
+    APINotFoundException(const std::string& endpoint = "Unknown endpoint") : 
+        message("API Not Found: " + endpoint) {}
+
+    virtual const char* what() const noexcept override {
+        return message.c_str();
+    }
+};
+
+class API {
+public:
+    /**
+     * Handles API calls based on a URL string
+     * @param url The URL string to process
+     * @return Content string if applicable, empty string if no response needed
+     */
+    std::string handleURL(const std::string& url) {
+        DEBUG("Processing URL: " + url);     
+
+        if (url.find("/echo/") == 0) {
+            std::string echoContent = url.substr(6); // Skip "/echo"
+            return echoContent;
+        } 
+        
+        // Default response for unknown URLs
+        throw APINotFoundException(url);
+    }
+};
+
+std::string make_response(std::string status_code, std::string content) {
+  if (content.empty()) {
+    return "HTTP/1.1 " + status_code + "\r\n\r\n";
+  }
+  return "HTTP/1.1 " + status_code + "\r\nContent-Type: text/html\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
+}
+
+int send_response(int client_socket, int server_socket, std::string response) {
+  send(client_socket, response.c_str(), response.size(), 0);
+  DEBUG("Response sent: " << response);
+
+  close(client_socket);
+  close(server_socket);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
   std::cout << std::unitbuf;
@@ -65,44 +115,54 @@ int main(int argc, char **argv) {
   if (bytes_read < 0) {
     std::cerr << "Failed to read from client\n";
     return 1;
-  }  else {
-    buffer[bytes_read] = '\0';
-    DEBUG("Received HTTP request:\n" << buffer);
+  }
+  API api;
+  std::string response;
 
-    // Extract the URL (path) from the request
-    std::string request(buffer);
-    std::string url;
-    
-    // Find the first line of the request
-    size_t end_of_line = request.find("\r\n");
-    if (end_of_line != std::string::npos) {
-      std::string first_line = request.substr(0, end_of_line);
-      
-      // Find the first space (after the HTTP method)
-      size_t method_end = first_line.find(" ");
-      if (method_end != std::string::npos) {
-        // Find the second space (after the URL)
-        size_t url_end = first_line.find(" ", method_end + 1);
-        DEBUG("Extracted first line: " << first_line);
-        if (url_end != std::string::npos) {
-          // Extract the URL between the two spaces
-          url = first_line.substr(method_end + 1, url_end - method_end - 1);
-          DEBUG("Extracted URL: " << url);
-        }
-      }
-    }
+  buffer[bytes_read] = '\0';
+  DEBUG("Received HTTP request:\n" << buffer);
+  // Extract the URL (path) from the request
+  std::string request(buffer);
+  std::string url = "";
 
-    std::string response;
-    if (url == "/") {
-      response = "HTTP/1.1 200 OK\r\n\r\n";
-    } else {
-      response = "HTTP/1.1 404 Not Found\r\n\r\n";
-    }
-    send(client, response.c_str(), response.size(), 0);
-    DEBUG("Response sent");
-    close(client);
+  response = make_response("400 Bad Request", ""); // Default response for malformed requests
+  
+  // Parse the HTTP request line to extract the URL
+  size_t end_of_line = request.find("\r\n");
+  if (end_of_line == std::string::npos) {
+    DEBUG("Malformed request: No line ending found");
+    send_response(client, server_fd, response);
   }
   
-  close(server_fd);
+  std::string first_line = request.substr(0, end_of_line);
+  DEBUG("Extracted first line: " << first_line);
+  
+  // HTTP request format: METHOD URL HTTP_VERSION
+  size_t method_end = first_line.find(" ");
+  size_t url_end = first_line.find(" ", method_end + 1);
+  
+  if (method_end == std::string::npos || url_end == std::string::npos) {
+    DEBUG("Malformed request: Invalid HTTP format");
+    send_response(client, server_fd, response);
+  }
+  
+  // Extract the URL between the two spaces
+  url = first_line.substr(method_end + 1, url_end - method_end - 1);
+  DEBUG("Extracted URL: " << url);
+  
+  // Handle the URL
+  if (url == "/") {
+    response = make_response("200 OK", "");
+  } else {
+    try {
+      std::string content = api.handleURL(url);
+      response = make_response("200 OK", content);
+    } catch (const APINotFoundException& e) {
+      DEBUG("API not found: " << e.what());
+      response = make_response("404 Not Found", "");
+    }
+  }
+
+  send_response(client, server_fd, response);
   return 0;
 }
