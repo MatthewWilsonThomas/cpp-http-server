@@ -10,6 +10,7 @@
 #include <sstream>
 #include <vector>
 #include <unordered_map>
+#include <fstream>
 
 #include <pthread.h>
 
@@ -40,12 +41,11 @@ std::vector<std::string> split(const std::string &message, const std::string& de
   }
   return tokens;
 }
-
-std::string make_response(std::string status_code, std::string content) {
+std::string make_response(std::string status_code, std::string content = "", std::string content_type = "text/html") {
   if (content.empty()) {
     return "HTTP/1.1 " + status_code + "\r\n\r\n";
   }
-  return "HTTP/1.1 " + status_code + "\r\nContent-Type: text/plain\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
+  return "HTTP/1.1 " + status_code + "\r\nContent-Type: " + content_type + "\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
 }
 
 int send_response(int client_socket, std::string response) {
@@ -88,6 +88,9 @@ class RequestParser {
     }
 };
 
+// Global directory variable accessible across all threads
+std::string directory = "";
+
 class API {
 public:
     RequestParser request_parser;
@@ -106,6 +109,9 @@ public:
         if (request_parser.url.find("/echo/") == 0) {
             return echo();
         } 
+        if (request_parser.url.find("/files/") == 0) {
+            return files();
+        }
         if (request_parser.url.find("/user-agent") == 0) {
             return user_agent();
         }
@@ -116,15 +122,23 @@ public:
     }
     std::string echo() {
         DEBUG("Echoing from URL: " + request_parser.url);
-        // Extract the part after "/echo/"
-        if (request_parser.url.length() > 6) {
-            return request_parser.url.substr(6);
-        }
-        return "";
+        return make_response("200 OK", request_parser.url.substr(6), "text/plain");
     }
     std::string user_agent() {
         DEBUG("User-Agent: " + request_parser.content_map["User-Agent"]);
-        return request_parser.content_map["User-Agent"];
+        return make_response("200 OK", request_parser.content_map["User-Agent"], "text/plain");
+    }
+    std::string files() {
+        DEBUG("Files: " + request_parser.url);
+        std::string filename = request_parser.url.substr(7);
+        std::string filepath = directory.empty() ? filename : directory + "/" + filename;
+        
+        std::ifstream file(filepath);
+        if (!file.is_open()) {
+            return make_response("404 Not Found");
+        }
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        return make_response("200 OK", content, "application/octet-stream");
     }
 };
 
@@ -140,7 +154,7 @@ void* handle_connection(void* arg) {
   free(data);
 
   std::string response;
-  response = make_response("400 Bad Request", ""); // Default response for malformed requests
+  response = make_response("400 Bad Request");
 
   // Buffer to store the incoming HTTP request
   char buffer[1024] = {0};
@@ -159,11 +173,10 @@ void* handle_connection(void* arg) {
   
   // Handle the URL
   try {
-    std::string content = api.getResponse();
-    response = make_response("200 OK", content);
+    response = api.getResponse();
   } catch (const APINotFoundException& e) {
     DEBUG("API not found: " << e.what());
-    response = make_response("404 Not Found", "");
+    response = make_response("404 Not Found");
   }
 
   send_response(client_socket, response);
@@ -175,6 +188,16 @@ int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
+  
+  // Parse command line arguments for --directory flag
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--directory" && i + 1 < argc) {
+      directory = argv[i + 1];
+      DEBUG("Directory set to: " << directory);
+      break;
+    }
+  }
   
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   DEBUG("Logs from your program will appear here!");
