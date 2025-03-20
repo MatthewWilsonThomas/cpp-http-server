@@ -14,8 +14,7 @@
 
 #include <pthread.h>
 
-// Debug tag for std::out statements with toggle functionality
-#define DEBUG_ENABLED 0  // Set to 0 to disable debug output
+#define DEBUG_ENABLED 1  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 class APINotFoundException : public std::exception {
@@ -31,17 +30,6 @@ public:
     }
 };
 
-std::vector<std::string> split(const std::string &message, const std::string& delim) {
-  std::vector<std::string> tokens;
-  std::stringstream ss = std::stringstream{message};
-  std::string line;
-  while (getline(ss, line, *delim.begin())) {
-    tokens.push_back(line);
-    ss.ignore(delim.length() - 1);
-  }
-  return tokens;
-}
-
 std::string make_response(std::string status_code, std::string content = "", std::string content_type = "text/html") {
   if (content.empty()) {
     return "HTTP/1.1 " + status_code + "\r\n\r\n";
@@ -55,41 +43,74 @@ int send_response(int client_socket, std::string response) {
   return 0;
 }
 
+std::vector<std::string> split_string(const std::string& str, const std::string& delimiter) {
+    std::vector<std::string> tokens;
+    size_t pos = 0;
+    size_t prev = 0;
+    
+    while ((pos = str.find(delimiter, prev)) != std::string::npos) {
+        tokens.push_back(str.substr(prev, pos - prev));
+        prev = pos + delimiter.length();
+    }
+    
+    // Add the last token
+    if (prev < str.length()) {
+        tokens.push_back(str.substr(prev));
+    }
+    
+    return tokens;
+}
+
 class RequestParser {
   public:
-    std::string url;
     std::string method;
+    std::string url;
     std::unordered_map<std::string, std::string> content_map;
+    std::string body;
     
     RequestParser(const std::string& request) {
-      std::vector<std::string> lines = split(request, "\r\n");
-      if (lines.empty()) return;
+      std::string header, body;
+      std::vector<std::string> parts = split_string(request, "\r\n\r\n");
+      if (parts.size() >= 2) {
+        header = parts[0];
+        body = parts[1];
+      } else if (parts.size() == 1) {
+        header = parts[0];
+        // No body
+      }
+
+      std::vector<std::string> h_lines = split_string(header, "\r\n");
+      if (h_lines.empty()) return;
       
-      std::vector<std::string> request_parts = split(lines[0], " ");
+      std::vector<std::string> request_parts = split_string(h_lines[0], " ");
       if (request_parts.size() >= 2) {
         this->method = request_parts[0];
         this->url = request_parts[1];
       }
       
-      for (size_t i = 1; i < lines.size(); i++) {
-        std::string line = lines[i];
+      for (size_t i = 1; i < h_lines.size(); i++) {
+        std::string line = h_lines[i];
         if (line.empty()) continue;
         
-        std::vector<std::string> parts = split(line, ": ");
+        std::vector<std::string> parts = split_string(line, ": ");
         if (parts.size() >= 2) {
           this->content_map[parts[0]] = parts[1];
         }
       }
 
+      if (!body.empty()) {
+        this->body = body;
+      }
+
       DEBUG("Method: " << method);
       DEBUG("URL: " << url);
       for (auto const& pair : this->content_map) {
-        DEBUG("Line: " << pair.first << " " << pair.second);
+        DEBUG("Header: " << pair.first << " = " << pair.second);
       }
+      DEBUG("Body: " << body);
     }
 };
 
-// Global directory variable accessible across all threads
 std::string directory = "";
 
 class API {
@@ -134,12 +155,23 @@ public:
         std::string filename = request_parser.url.substr(7);
         std::string filepath = directory.empty() ? filename : directory + "/" + filename;
         
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            return make_response("404 Not Found");
+        if (request_parser.method == "GET") {
+            std::ifstream file(filepath);
+            if (!file.is_open()) {
+                return make_response("404 Not Found");
+            }
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            return make_response("200 OK", content, "application/octet-stream");
+        } else if (request_parser.method == "POST") {
+            std::ofstream file(filepath, std::ios::binary);
+            if (!file.is_open()) {
+                return make_response("404 Not Found");
+            }
+            file.write(request_parser.body.c_str(), request_parser.body.length());
+            file.close();
+            return make_response("200 OK");
         }
-        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        return make_response("200 OK", content, "application/octet-stream");
+        return make_response("405 Method Not Allowed");
     }
 };
 
