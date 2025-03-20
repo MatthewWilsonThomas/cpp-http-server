@@ -14,7 +14,7 @@
 
 #include <pthread.h>
 
-#define DEBUG_ENABLED 1  // Set to 0 to disable debug output
+#define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 class APINotFoundException : public std::exception {
@@ -169,7 +169,7 @@ public:
             }
             file.write(request_parser.body.c_str(), request_parser.body.length());
             file.close();
-            return make_response("200 OK");
+            return make_response("201 Created");
         }
         return make_response("405 Method Not Allowed");
     }
