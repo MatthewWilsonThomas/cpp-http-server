@@ -7,12 +7,12 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-
+#include <sstream>
+#include <unordered_map>
 // Debug tag for std::out statements with toggle functionality
 #define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
-// Custom exception for API not found errors
 class APINotFoundException : public std::exception {
 private:
     std::string message;
@@ -26,25 +26,16 @@ public:
     }
 };
 
-class API {
-public:
-    /**
-     * Handles API calls based on a URL string
-     * @param url The URL string to process
-     * @return Content string if applicable, empty string if no response needed
-     */
-    std::string handleURL(const std::string& url) {
-        DEBUG("Processing URL: " + url);     
-
-        if (url.find("/echo/") == 0) {
-            std::string echoContent = url.substr(6); // Skip "/echo"
-            return echoContent;
-        } 
-        
-        // Default response for unknown URLs
-        throw APINotFoundException(url);
-    }
-};
+std::vector<std::string> split(const std::string &message, const std::string& delim) {
+  std::vector<std::string> tokens;
+  std::stringstream ss = std::stringstream{message};
+  std::string line;
+  while (getline(ss, line, *delim.begin())) {
+    tokens.push_back(line);
+    ss.ignore(delim.length() - 1);
+  }
+  return tokens;
+}
 
 std::string make_response(std::string status_code, std::string content) {
   if (content.empty()) {
@@ -61,6 +52,74 @@ int send_response(int client_socket, int server_socket, std::string response) {
   close(server_socket);
   return 0;
 }
+
+class RequestParser {
+  public:
+    std::string url;
+    std::string method;
+    std::unordered_map<std::string, std::string> content_map;
+    
+    RequestParser(const std::string& request) {
+      std::vector<std::string> lines = split(request, "\r\n");
+      if (lines.empty()) return;
+      
+      std::vector<std::string> request_parts = split(lines[0], " ");
+      if (request_parts.size() >= 2) {
+        this->method = request_parts[0];
+        this->url = request_parts[1];
+      }
+      
+      for (size_t i = 1; i < lines.size(); i++) {
+        std::string line = lines[i];
+        if (line.empty()) continue;
+        
+        std::vector<std::string> parts = split(line, ": ");
+        if (parts.size() >= 2) {
+          this->content_map[parts[0]] = parts[1];
+        }
+      }
+
+      DEBUG("Method: " << method);
+      DEBUG("URL: " << url);
+      for (auto const& pair : this->content_map) {
+        DEBUG("Line: " << pair.first << " " << pair.second);
+      }
+    }
+};
+
+class API {
+public:
+    RequestParser request_parser;
+
+    API(const RequestParser& request_parser) : request_parser(request_parser) {
+    }
+
+    /**
+     * Handles API calls based on a URL string
+     * @param url The URL string to process
+     * @return Content string if applicable, empty string if no response needed
+     */
+    std::string getResponse() {
+        DEBUG("Processing URL: " + request_parser.url);     
+        
+        if (request_parser.url.find("/echo/") == 0) {
+            return echo();
+        } 
+        if (request_parser.url.find("/user-agent") == 0) {
+            return user_agent();
+        }
+        if (request_parser.url == "/") {
+            return "";
+        }
+        throw APINotFoundException(request_parser.url);
+    }
+    std::string echo() {
+      return request_parser.content_map["URL"].substr(6);
+    }
+    std::string user_agent() {
+        return request_parser.content_map["User-Agent"];
+    }
+};
 
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
@@ -104,7 +163,10 @@ int main(int argc, char **argv) {
   
   struct sockaddr_in client_addr;
   int client_addr_len = sizeof(client_addr);
-  
+
+  std::string response;
+  response = make_response("400 Bad Request", ""); // Default response for malformed requests
+
   DEBUG("Waiting for a client to connect...");
   
   int client = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
@@ -114,53 +176,24 @@ int main(int argc, char **argv) {
   int bytes_read = read(client, buffer, sizeof(buffer));
   if (bytes_read < 0) {
     std::cerr << "Failed to read from client\n";
+    send_response(client, server_fd, response);
     return 1;
   }
-  API api;
-  std::string response;
 
   buffer[bytes_read] = '\0';
   DEBUG("Received HTTP request:\n" << buffer);
-  // Extract the URL (path) from the request
-  std::string request(buffer);
-  std::string url = "";
+  RequestParser request_parser(buffer);
 
-  response = make_response("400 Bad Request", ""); // Default response for malformed requests
-  
-  // Parse the HTTP request line to extract the URL
-  size_t end_of_line = request.find("\r\n");
-  if (end_of_line == std::string::npos) {
-    DEBUG("Malformed request: No line ending found");
-    send_response(client, server_fd, response);
-  }
-  
-  std::string first_line = request.substr(0, end_of_line);
-  DEBUG("Extracted first line: " << first_line);
-  
-  // HTTP request format: METHOD URL HTTP_VERSION
-  size_t method_end = first_line.find(" ");
-  size_t url_end = first_line.find(" ", method_end + 1);
-  
-  if (method_end == std::string::npos || url_end == std::string::npos) {
-    DEBUG("Malformed request: Invalid HTTP format");
-    send_response(client, server_fd, response);
-  }
-  
-  // Extract the URL between the two spaces
-  url = first_line.substr(method_end + 1, url_end - method_end - 1);
-  DEBUG("Extracted URL: " << url);
+  API api(request_parser);
+
   
   // Handle the URL
-  if (url == "/") {
-    response = make_response("200 OK", "");
-  } else {
-    try {
-      std::string content = api.handleURL(url);
-      response = make_response("200 OK", content);
-    } catch (const APINotFoundException& e) {
-      DEBUG("API not found: " << e.what());
-      response = make_response("404 Not Found", "");
-    }
+  try {
+    std::string content = api.getResponse();
+    response = make_response("200 OK", content);
+  } catch (const APINotFoundException& e) {
+    DEBUG("API not found: " << e.what());
+    response = make_response("404 Not Found", "");
   }
 
   send_response(client, server_fd, response);
