@@ -50,7 +50,7 @@ std::string make_response(std::string status_code, std::string content) {
   if (content.empty()) {
     return "HTTP/1.1 " + status_code + "\r\n\r\n";
   }
-  return "HTTP/1.1 " + status_code + "\r\nContent-Type: text/html\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
+  return "HTTP/1.1 " + status_code + "\r\nContent-Type: text/plain\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
 }
 
 int send_response(int client_socket, int server_socket, std::string response) {
