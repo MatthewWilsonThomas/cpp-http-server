@@ -116,9 +116,15 @@ public:
         throw APINotFoundException(request_parser.url);
     }
     std::string echo() {
-      return request_parser.content_map["URL"].substr(6);
+        DEBUG("Echoing from URL: " + request_parser.url);
+        // Extract the part after "/echo/"
+        if (request_parser.url.length() > 6) {
+            return request_parser.url.substr(6);
+        }
+        return "";
     }
     std::string user_agent() {
+        DEBUG("User-Agent: " + request_parser.content_map["User-Agent"]);
         return request_parser.content_map["User-Agent"];
     }
 };
