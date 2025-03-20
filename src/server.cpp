@@ -41,6 +41,7 @@ std::vector<std::string> split(const std::string &message, const std::string& de
   }
   return tokens;
 }
+
 std::string make_response(std::string status_code, std::string content = "", std::string content_type = "text/html") {
   if (content.empty()) {
     return "HTTP/1.1 " + status_code + "\r\n\r\n";
@@ -116,7 +117,7 @@ public:
             return user_agent();
         }
         if (request_parser.url == "/") {
-            return "";
+            return make_response("200 OK");
         }
         throw APINotFoundException(request_parser.url);
     }
