@@ -15,7 +15,7 @@
 #include <pthread.h>
 
 
-#define DEBUG_ENABLED 0  // Set to 0 to disable debug output
+#define DEBUG_ENABLED 1  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 std::string gzip_encode(const std::string& content) {
@@ -76,14 +76,7 @@ class HTTPResponse {
     std::string content;
     std::string content_type;
     std::vector<std::string> encoding; // "gzip" or ""
-
-    std::vector<std::string> acceptable_encodings;  
-
-    HTTPResponse() {
-      this->encoding = {};
-      this->acceptable_encodings = {"gzip", ""};
-    }
-
+    
     std::string to_string() {
       std::string output;
       std::string encoding_to_use;
@@ -206,11 +199,7 @@ public:
     HTTPResponse getResponse() {
         DEBUG("Processing URL: " + request_parser.url); 
         if (request_parser.content_map.find("Accept-Encoding") != request_parser.content_map.end()) {
-          for (std::string encoding : split_string(removeSpaces(request_parser.content_map["Accept-Encoding"]), ",")) {
-            if (std::find(this->response.acceptable_encodings.begin(), this->response.acceptable_encodings.end(), encoding) != this->response.acceptable_encodings.end()) {
-              this->response.encoding.push_back(encoding);
-            }
-          }
+          response.encoding = split_string(removeSpaces(request_parser.content_map["Accept-Encoding"]), ",");
         }
         DEBUG("Encodings: " + response.list_encodings());
 
