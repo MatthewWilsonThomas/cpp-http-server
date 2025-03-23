@@ -20,6 +20,8 @@
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 std::string gzip_encode(const std::string& content) {
+  DEBUG("Compressing content of length: " + std::to_string(content.length()));
+  
   // Initialize zlib stream
   z_stream zs;
   memset(&zs, 0, sizeof(zs));
@@ -27,6 +29,7 @@ std::string gzip_encode(const std::string& content) {
   if (deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 
                   15 + 16, // 15 window bits + 16 for gzip header
                   8, Z_DEFAULT_STRATEGY) != Z_OK) {
+    DEBUG("deflateInit2 failed");
     return content;  // Return unmodified on error
   }
 
@@ -41,7 +44,15 @@ std::string gzip_encode(const std::string& content) {
   zs.avail_out = buffer_size;
 
   // Compress
-  deflate(&zs, Z_FINISH);
+  int result = deflate(&zs, Z_FINISH);
+  
+  // Check if we have an error or if there's still input data left
+  if (result != Z_STREAM_END && result != Z_OK) {
+    DEBUG("deflate failed with result: " + std::to_string(result));
+    deflateEnd(&zs);
+    delete[] output_buffer;
+    return content;  // Return unmodified on error
+  }
   
   // Create result string from buffer
   std::string compressed_data(output_buffer, zs.total_out);
@@ -50,7 +61,18 @@ std::string gzip_encode(const std::string& content) {
   deflateEnd(&zs);
   delete[] output_buffer;
   
-  return compressed_data;
+  DEBUG("Compressed size: " + std::to_string(compressed_data.length()));
+  
+  // Verify we have a valid gzip header
+  if (compressed_data.length() > 2 && 
+      (unsigned char)compressed_data[0] == 0x1f && 
+      (unsigned char)compressed_data[1] == 0x8b) {
+    DEBUG("Valid gzip header detected");
+    return compressed_data;
+  } else {
+    DEBUG("Invalid gzip output - returning uncompressed");
+    return content;
+  }
 }
 
 std::string removeSpaces(std::string str) {
