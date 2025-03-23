@@ -27,7 +27,7 @@ std::string gzip_encode(const std::string& content) {
   memset(&zs, 0, sizeof(zs));
   
   if (deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 
-                  15 + 16, // 15 window bits + 16 for gzip header
+                  31,  // 15 for max window size + 16 for gzip header
                   8, Z_DEFAULT_STRATEGY) != Z_OK) {
     DEBUG("deflateInit2 failed");
     return content;  // Return unmodified on error
@@ -39,40 +39,29 @@ std::string gzip_encode(const std::string& content) {
 
   // Prepare output buffer (compressed data is usually smaller, but allocate conservatively)
   int buffer_size = content.size() * 1.1 + 12;  // Add some extra space
-  char* output_buffer = new char[buffer_size];
-  zs.next_out = (Bytef*)output_buffer;
+  std::vector<char> output_buffer(buffer_size);
+  zs.next_out = (Bytef*)output_buffer.data();
   zs.avail_out = buffer_size;
 
   // Compress
   int result = deflate(&zs, Z_FINISH);
   
-  // Check if we have an error or if there's still input data left
-  if (result != Z_STREAM_END && result != Z_OK) {
+  // Check if compression was successful
+  if (result != Z_STREAM_END) {
     DEBUG("deflate failed with result: " + std::to_string(result));
     deflateEnd(&zs);
-    delete[] output_buffer;
     return content;  // Return unmodified on error
   }
   
   // Create result string from buffer
-  std::string compressed_data(output_buffer, zs.total_out);
+  std::string compressed_data(output_buffer.data(), zs.total_out);
   
   // Clean up
   deflateEnd(&zs);
-  delete[] output_buffer;
   
   DEBUG("Compressed size: " + std::to_string(compressed_data.length()));
   
-  // Verify we have a valid gzip header
-  if (compressed_data.length() > 2 && 
-      (unsigned char)compressed_data[0] == 0x1f && 
-      (unsigned char)compressed_data[1] == 0x8b) {
-    DEBUG("Valid gzip header detected");
-    return compressed_data;
-  } else {
-    DEBUG("Invalid gzip output - returning uncompressed");
-    return content;
-  }
+  return compressed_data;
 }
 
 std::string removeSpaces(std::string str) {
