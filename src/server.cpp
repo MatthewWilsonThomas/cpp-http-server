@@ -84,7 +84,8 @@ class HTTPResponse {
       if (this->content_type != "") {response += "Content-Type: " + this->content_type + "\r\n";}
       if (this->encoding == "gzip") {response += "Content-Encoding: gzip\r\n";}
       if (output != "") {response += "Content-Length: " + std::to_string(output.length()) + "\r\n";}
-      if (output != "") {response += "\r\n\r\n" + output;}
+      response += "\r\n";
+      if (output != "") {response += output;}
       return response;
     }
 };
