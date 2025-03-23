@@ -15,7 +15,7 @@
 #include <pthread.h>
 
 
-#define DEBUG_ENABLED 0  // Set to 0 to disable debug output
+#define DEBUG_ENABLED 1  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 std::string gzip_encode(const std::string& content) {
@@ -73,17 +73,18 @@ class HTTPResponse {
     std::string encoding; // "gzip" or ""
     
     std::string to_string() {
+      std::string output;
       if (this->encoding == "gzip") {
-        content = gzip_encode(this->content);
+        output = gzip_encode(this->content);
       } else {
-        content = this->content;
+        output = this->content;
       }
 
-      std::string response = "HTTP/1.1 " + status_code;
+      std::string response = "HTTP/1.1 " + this->status_code;
+      if (this->content_type != "") {response += "\r\nContent-Type: " + this->content_type;}
       if (this->encoding == "gzip") {response += "\r\nContent-Encoding: gzip";}
-      if (this->content_type != "") {response += "\r\nContent-Type: " + content_type;}
-      if (content != "") {response += "\r\nContent-Length: " + std::to_string(content.length());}
-      if (content != "") {response += "\r\n\r\n" + content;}
+      if (output != "") {response += "\r\nContent-Length: " + std::to_string(output.length());}
+      if (output != "") {response += "\r\n\r\n" + output;}
       return response;
     }
 };
@@ -225,6 +226,7 @@ public:
                 std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
                 this->response.content = content;
                 this->response.content_type = "application/octet-stream";
+                this->response.status_code = "200 OK";
             }
         } else if (request_parser.method == "POST") {
             std::ofstream file(filepath, std::ios::binary);
