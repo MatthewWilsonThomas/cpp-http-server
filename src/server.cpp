@@ -78,7 +78,7 @@ class HTTPResponse {
       } else {
         content = this->content;
       }
-      
+
       std::string response = "HTTP/1.1 " + status_code;
       if (this->encoding == "gzip") {response += "\r\nContent-Encoding: gzip";}
       if (this->content_type != "") {response += "\r\nContent-Type: " + content_type;}
@@ -253,8 +253,8 @@ void* handle_connection(void* arg) {
   struct sockaddr_in client_addr = data->client_addr;
   free(data);
 
-  std::string response;
-  response = make_response("400 Bad Request");
+  HTTPResponse response;
+  response.status_code = "400 Bad Request";
 
   // Buffer to store the incoming HTTP request
   char buffer[1024] = {0};
@@ -276,7 +276,10 @@ void* handle_connection(void* arg) {
     response = api.getResponse();
   } catch (const APINotFoundException& e) {
     DEBUG("API not found: " << e.what());
-    response = make_response("404 Not Found");
+    response.status_code = "404 Not Found";
+  } catch (const std::exception& e) {
+    DEBUG("Error: " << e.what());
+    response.status_code = "500 Internal Server Error";
   }
 
   send_response(client_socket, response);
