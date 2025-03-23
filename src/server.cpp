@@ -13,9 +13,10 @@
 #include <fstream>
 #include <zlib.h>
 #include <pthread.h>
+#include <algorithm>
 
 
-#define DEBUG_ENABLED 1  // Set to 0 to disable debug output
+#define DEBUG_ENABLED 0 // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 std::string gzip_encode(const std::string& content) {
@@ -78,16 +79,17 @@ class HTTPResponse {
     std::vector<std::string> encoding; // "gzip" or ""
     
     std::string to_string() {
-      std::string output;
+      std::string output = this->content;
       std::string encoding_to_use;
+
       if (this->encoding.size() > 0) {
-        if (std::find(this->encoding.begin(), this->encoding.end(), "gzip") != this->encoding.end()) {
+        if (std::find(this->encoding.begin(), this->encoding.end(), std::string("gzip")) != this->encoding.end()) {
           output = gzip_encode(this->content);
           encoding_to_use = "gzip";
         }
-      } else {
-        output = this->content;
       }
+      DEBUG("Encoding to use: " + encoding_to_use);
+      DEBUG("Output: " + output);
 
       std::string response = "HTTP/1.1 " + this->status_code + "\r\n";
       if (this->content_type != "") {response += "Content-Type: " + this->content_type + "\r\n";}
