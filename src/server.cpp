@@ -52,6 +52,11 @@ std::string gzip_encode(const std::string& content) {
   return compressed_data;
 }
 
+std::string removeSpaces(std::string str) {
+    str.erase(std::remove(str.begin(), str.end(), ' '), str.end());
+    return str;
+}
+
 class APINotFoundException : public std::exception {
 private:
     std::string message;
@@ -70,23 +75,37 @@ class HTTPResponse {
     std::string status_code;
     std::string content;
     std::string content_type;
-    std::string encoding; // "gzip" or ""
-    
+    std::vector<std::string> encoding; // "gzip" or ""
+
+    std::vector<std::string> acceptable_encodings = {"gzip", ""};  
+
     std::string to_string() {
       std::string output;
-      if (this->encoding == "gzip") {
-        output = gzip_encode(this->content);
+      std::string encoding_to_use;
+      if (this->encoding.size() > 0) {
+        if (std::find(this->encoding.begin(), this->encoding.end(), "gzip") != this->encoding.end()) {
+          output = gzip_encode(this->content);
+          encoding_to_use = "gzip";
+        }
       } else {
         output = this->content;
       }
 
       std::string response = "HTTP/1.1 " + this->status_code + "\r\n";
       if (this->content_type != "") {response += "Content-Type: " + this->content_type + "\r\n";}
-      if (this->encoding == "gzip") {response += "Content-Encoding: gzip\r\n";}
+      if (encoding_to_use != "") {response += "Content-Encoding: " + encoding_to_use + "\r\n";}
       if (output != "") {response += "Content-Length: " + std::to_string(output.length()) + "\r\n";}
       response += "\r\n";
       if (output != "") {response += output;}
       return response;
+    }
+
+    std::string list_encodings() {
+      std::string output;
+      for (std::string encoding : this->encoding) {
+        output += encoding + ", ";
+      }
+      return output;
     }
 };
 
@@ -182,8 +201,13 @@ public:
     HTTPResponse getResponse() {
         DEBUG("Processing URL: " + request_parser.url); 
         if (request_parser.content_map.find("Accept-Encoding") != request_parser.content_map.end()) {
-          response.encoding = request_parser.content_map["Accept-Encoding"];
+          for (std::string encoding : split_string(removeSpaces(request_parser.content_map["Accept-Encoding"]), ",")) {
+            if (std::find(this->response.acceptable_encodings.begin(), this->response.acceptable_encodings.end(), encoding) != this->response.acceptable_encodings.end()) {
+              this->response.encoding.push_back(encoding);
+            }
+          }
         }
+        DEBUG("Encodings: " + response.list_encodings());
 
         if (request_parser.url.find("/echo/") == 0) {
             return echo();
