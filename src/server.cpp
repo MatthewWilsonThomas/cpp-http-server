@@ -11,11 +11,46 @@
 #include <vector>
 #include <unordered_map>
 #include <fstream>
-
+#include <zlib.h>
 #include <pthread.h>
+
 
 #define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
+
+std::string gzip_encode(const std::string& content) {
+  // Initialize zlib stream
+  z_stream zs;
+  memset(&zs, 0, sizeof(zs));
+  
+  if (deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 
+                  15 + 16, // 15 window bits + 16 for gzip header
+                  8, Z_DEFAULT_STRATEGY) != Z_OK) {
+    return content;  // Return unmodified on error
+  }
+
+  // Set up input
+  zs.next_in = (Bytef*)content.data();
+  zs.avail_in = content.size();
+
+  // Prepare output buffer (compressed data is usually smaller, but allocate conservatively)
+  int buffer_size = content.size() * 1.1 + 12;  // Add some extra space
+  char* output_buffer = new char[buffer_size];
+  zs.next_out = (Bytef*)output_buffer;
+  zs.avail_out = buffer_size;
+
+  // Compress
+  deflate(&zs, Z_FINISH);
+  
+  // Create result string from buffer
+  std::string compressed_data(output_buffer, zs.total_out);
+  
+  // Clean up
+  deflateEnd(&zs);
+  delete[] output_buffer;
+  
+  return compressed_data;
+}
 
 class APINotFoundException : public std::exception {
 private:
@@ -30,16 +65,32 @@ public:
     }
 };
 
-std::string make_response(std::string status_code, std::string content = "", std::string content_type = "text/html") {
-  if (content.empty()) {
-    return "HTTP/1.1 " + status_code + "\r\n\r\n";
-  }
-  return "HTTP/1.1 " + status_code + "\r\nContent-Type: " + content_type + "\r\nContent-Length: " + std::to_string(content.length()) + "\r\n\r\n" + content;
-}
+class HTTPResponse {
+  public:
+    std::string status_code;
+    std::string content;
+    std::string content_type;
+    std::string encoding; // "gzip" or ""
+    
+    std::string to_string() {
+      if (this->encoding == "gzip") {
+        content = gzip_encode(this->content);
+      } else {
+        content = this->content;
+      }
+      
+      std::string response = "HTTP/1.1 " + status_code;
+      if (this->encoding == "gzip") {response += "\r\nContent-Encoding: gzip";}
+      if (this->content_type != "") {response += "\r\nContent-Type: " + content_type;}
+      if (content != "") {response += "\r\nContent-Length: " + std::to_string(content.length());}
+      if (content != "") {response += "\r\n\r\n" + content;}
+      return response;
+    }
+};
 
-int send_response(int client_socket, std::string response) {
-  send(client_socket, response.c_str(), response.size(), 0);
-  DEBUG("Response sent: " << response);
+int send_response(int client_socket, HTTPResponse response) {
+  send(client_socket, response.to_string().c_str(), response.to_string().size(), 0);
+  DEBUG("Response sent: " << response.to_string());
   return 0;
 }
 
@@ -116,6 +167,7 @@ std::string directory = "";
 class API {
 public:
     RequestParser request_parser;
+    HTTPResponse response;
 
     API(const RequestParser& request_parser) : request_parser(request_parser) {
     }
@@ -125,9 +177,12 @@ public:
      * @param url The URL string to process
      * @return Content string if applicable, empty string if no response needed
      */
-    std::string getResponse() {
-        DEBUG("Processing URL: " + request_parser.url);     
-        
+    HTTPResponse getResponse() {
+        DEBUG("Processing URL: " + request_parser.url); 
+        if (request_parser.content_map.find("Accept-Encoding") != request_parser.content_map.end()) {
+          response.encoding = request_parser.content_map["Accept-Encoding"];
+        }
+
         if (request_parser.url.find("/echo/") == 0) {
             return echo();
         } 
@@ -138,19 +193,26 @@ public:
             return user_agent();
         }
         if (request_parser.url == "/") {
-            return make_response("200 OK");
+            this->response.status_code = "200 OK";
+            return this->response;
         }
         throw APINotFoundException(request_parser.url);
     }
-    std::string echo() {
+    HTTPResponse echo() {
         DEBUG("Echoing from URL: " + request_parser.url);
-        return make_response("200 OK", request_parser.url.substr(6), "text/plain");
+        this->response.status_code = "200 OK";
+        this->response.content = request_parser.url.substr(6);
+        this->response.content_type = "text/plain";
+        return this->response;
     }
-    std::string user_agent() {
+    HTTPResponse user_agent() {
         DEBUG("User-Agent: " + request_parser.content_map["User-Agent"]);
-        return make_response("200 OK", request_parser.content_map["User-Agent"], "text/plain");
+        this->response.status_code = "200 OK";
+        this->response.content = request_parser.content_map["User-Agent"];
+        this->response.content_type = "text/plain";
+        return this->response;
     }
-    std::string files() {
+    HTTPResponse files() {
         DEBUG("Files: " + request_parser.url);
         std::string filename = request_parser.url.substr(7);
         std::string filepath = directory.empty() ? filename : directory + "/" + filename;
@@ -158,20 +220,25 @@ public:
         if (request_parser.method == "GET") {
             std::ifstream file(filepath);
             if (!file.is_open()) {
-                return make_response("404 Not Found");
+                this->response.status_code = "404 Not Found";
+            } else {
+                std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+                this->response.content = content;
+                this->response.content_type = "application/octet-stream";
             }
-            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            return make_response("200 OK", content, "application/octet-stream");
         } else if (request_parser.method == "POST") {
             std::ofstream file(filepath, std::ios::binary);
             if (!file.is_open()) {
-                return make_response("404 Not Found");
+                this->response.status_code = "404 Not Found";
+            } else {
+                file.write(request_parser.body.c_str(), request_parser.body.length());
+                file.close();
+                this->response.status_code = "201 Created";
             }
-            file.write(request_parser.body.c_str(), request_parser.body.length());
-            file.close();
-            return make_response("201 Created");
+        } else {
+            this->response.status_code = "405 Method Not Allowed";
         }
-        return make_response("405 Method Not Allowed");
+        return this->response;
     }
 };
 
