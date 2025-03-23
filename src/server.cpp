@@ -15,7 +15,7 @@
 #include <pthread.h>
 
 
-#define DEBUG_ENABLED 1  // Set to 0 to disable debug output
+#define DEBUG_ENABLED 0  // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
 std::string gzip_encode(const std::string& content) {
@@ -80,10 +80,10 @@ class HTTPResponse {
         output = this->content;
       }
 
-      std::string response = "HTTP/1.1 " + this->status_code;
-      if (this->content_type != "") {response += "\r\nContent-Type: " + this->content_type;}
-      if (this->encoding == "gzip") {response += "\r\nContent-Encoding: gzip";}
-      if (output != "") {response += "\r\nContent-Length: " + std::to_string(output.length());}
+      std::string response = "HTTP/1.1 " + this->status_code + "\r\n";
+      if (this->content_type != "") {response += "Content-Type: " + this->content_type + "\r\n";}
+      if (this->encoding == "gzip") {response += "Content-Encoding: gzip\r\n";}
+      if (output != "") {response += "Content-Length: " + std::to_string(output.length()) + "\r\n";}
       if (output != "") {response += "\r\n\r\n" + output;}
       return response;
     }
