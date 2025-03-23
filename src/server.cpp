@@ -19,49 +19,29 @@
 #define DEBUG_ENABLED 0 // Set to 0 to disable debug output
 #define DEBUG(x) if (DEBUG_ENABLED) std::cout << "[DEBUG] " << x << std::endl
 
-std::string gzip_encode(const std::string& content) {
-  DEBUG("Compressing content of length: " + std::to_string(content.length()));
-  
-  // Initialize zlib stream
-  z_stream zs;
-  memset(&zs, 0, sizeof(zs));
-  
-  if (deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 
-                  31,  // 15 for max window size + 16 for gzip header
-                  8, Z_DEFAULT_STRATEGY) != Z_OK) {
-    DEBUG("deflateInit2 failed");
-    return content;  // Return unmodified on error
-  }
-
-  // Set up input
-  zs.next_in = (Bytef*)content.data();
-  zs.avail_in = content.size();
-
-  // Prepare output buffer (compressed data is usually smaller, but allocate conservatively)
-  int buffer_size = content.size() * 1.1 + 12;  // Add some extra space
-  std::vector<char> output_buffer(buffer_size);
-  zs.next_out = (Bytef*)output_buffer.data();
-  zs.avail_out = buffer_size;
-
-  // Compress
-  int result = deflate(&zs, Z_FINISH);
-  
-  // Check if compression was successful
-  if (result != Z_STREAM_END) {
-    DEBUG("deflate failed with result: " + std::to_string(result));
+std::string gzip_encode(const std::string& str, int compressionlevel = Z_BEST_COMPRESSION) {
+    z_stream zs;
+    memset(&zs, 0, sizeof(zs));
+    if (deflateInit2(&zs, compressionlevel, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        throw(std::runtime_error("deflateInit failed while compressing."));
+    zs.next_in = (Bytef*)str.data();
+    zs.avail_in = str.size();
+    int ret;
+    char outbuffer[32768];
+    std::string outstring;
+    do {
+        zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
+        zs.avail_out = sizeof(outbuffer);
+        ret = deflate(&zs, Z_FINISH);
+        if (outstring.size() < zs.total_out) {
+            outstring.append(outbuffer, zs.total_out - outstring.size());
+        }
+    } while (ret == Z_OK);
     deflateEnd(&zs);
-    return content;  // Return unmodified on error
-  }
-  
-  // Create result string from buffer
-  std::string compressed_data(output_buffer.data(), zs.total_out);
-  
-  // Clean up
-  deflateEnd(&zs);
-  
-  DEBUG("Compressed size: " + std::to_string(compressed_data.length()));
-  
-  return compressed_data;
+    if (ret != Z_STREAM_END) {
+        throw(std::runtime_error("Exception during zlib compression: " + std::to_string(ret)));
+    }
+    return outstring;
 }
 
 std::string removeSpaces(std::string str) {
