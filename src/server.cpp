@@ -77,7 +77,12 @@ class HTTPResponse {
     std::string content_type;
     std::vector<std::string> encoding; // "gzip" or ""
 
-    std::vector<std::string> acceptable_encodings = {"gzip", ""};  
+    std::vector<std::string> acceptable_encodings;  
+
+    HTTPResponse() {
+      this->encoding = {};
+      this->acceptable_encodings = {"gzip", ""};
+    }
 
     std::string to_string() {
       std::string output;
